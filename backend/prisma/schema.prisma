@@ -1,0 +1,44 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Attendance {
+  id       Int      @id @default(autoincrement())
+  userId   Int
+  timeIn   String
+  timeOut  String?
+  date     DateTime @default(now())
+  user     User     @relation(fields: [userId], references: [id])
+}
+
+
+model User {
+  id       Int    @id @default(autoincrement())
+  name     String
+  email    String @unique
+  password String
+  role     Int 
+
+  assignedProjects Project[]    @relation("AssignedToEmployee") // Projects assigned to employees
+  createdProjects  Project[]    @relation("AssignedByHR") // Projects created by HR or Admin
+  Attendance       Attendance[]
+}
+
+model Project {
+  id          Int      @id @default(autoincrement())
+  projectName String
+  assignedTo  Int? // ✅ Links the project to an Employee (Role 3)
+  assignedBy  Int // ✅ Links the project to HR (Role 2) or Super Admin (Role 1)
+  clientName  String
+  status      String
+  description String
+  createdAt   DateTime @default(now())
+
+  assigned User? @relation("AssignedToEmployee", fields: [assignedTo], references: [id], onDelete: SetNull) // ✅ Links Employee (Role 3)
+  assigner User  @relation("AssignedByHR", fields: [assignedBy], references: [id]) // ✅ Links HR/Admin
+}
