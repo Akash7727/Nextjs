@@ -30,7 +30,9 @@ const AttendancePage = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("");
   const [alreadySubmitted, setAlreadySubmitted] = useState<boolean>(false);
-  const [showAbsent, setShowAbsent] = useState<boolean>(false);
+  const [absentEmployees, setAbsentEmployees] = useState<Employee[]>([]);
+  const today = new Date().toISOString().split("T")[0];
+  const [selectedDate, setSelectedDate] = useState<string>(today);
 
   useEffect(() => {
     const storedUserId = localStorage.getItem("userId");
@@ -49,21 +51,34 @@ const AttendancePage = () => {
     }
 
     if (storedRole === "1" || storedRole === "2") {
-      fetchEmployees(storedRole);
+      fetchEmployees(storedRole, storedUserId);
     }
   }, []);
 
-  const fetchEmployees = async (role: string) => {
+  useEffect(() => {
+    if (selectedEmployeeId && userId && role) {
+      getAttendance(userId, role, selectedEmployeeId, selectedDate);
+    }
+  }, [selectedEmployeeId, selectedDate]);
+
+  const fetchEmployees = async (role: string, selfId: string) => {
     try {
       const res = await axios.get(`http://localhost:9000/employees?role=${role}`);
-      setEmployees(res.data);
-      
+      let filtered: Employee[] = [];
+
+      if (role === "1") {
+        filtered = res.data.filter((emp: Employee) => emp.role === 3);
+      } else if (role === "2") {
+        filtered = res.data.filter((emp: Employee) => emp.role === 3 && emp.id !== selfId);
+      }
+
+      setEmployees(filtered);
     } catch (error) {
       console.error("Error fetching employees", error);
     }
   };
 
-  const getAttendance = async (uid: string, role: string, targetId?: string) => {
+  const getAttendance = async (uid: string, role: string, targetId?: string, dateFilter?: string) => {
     try {
       setLoading(true);
       const response = await axios.get(`http://localhost:9000/api/attendance`, {
@@ -74,30 +89,43 @@ const AttendancePage = () => {
         },
       });
 
-      const allRecords = response.data || [];
-      setRecords(allRecords);
+      const allRecords: Attendance[] = response.data || [];
+      const selectedDay = dateFilter || today;
 
-      const today = new Date().toISOString().split("T")[0];
-      const hasTodayRecord = allRecords.some((record: Attendance) => {
-        return record.date.startsWith(today);
-      });
+      const filtered = allRecords.filter((record) =>
+        record.date.startsWith(selectedDay)
+      );
 
-      setAlreadySubmitted(hasTodayRecord);
-      setShowAbsent(!hasTodayRecord);
-    } catch (err: unknown) {
+      setRecords(filtered);
+
+      const selectedDateObj = new Date(selectedDay);
+      const todayDateObj = new Date(today);
+
+      if (targetId) {
+        setAbsentEmployees([]);
+
+        if (selectedDateObj > todayDateObj) {
+          // Future date
+          setRecords([]);
+          setAbsentEmployees([]);
+        } else if (filtered.length === 0) {
+          const emp = employees.find((e) => e.id === targetId);
+          if (emp) setAbsentEmployees([emp]);
+        }
+      }
+
+      if (role === "3" && !targetId) {
+        const hasTodayRecord = allRecords.some((record: Attendance) =>
+          record.date.startsWith(today)
+        );
+        setAlreadySubmitted(hasTodayRecord);
+      }
+    } catch (err) {
       const error = err as AxiosError<{ message: string }>;
       console.error("Failed to fetch attendance:", error);
       alert(error?.response?.data?.message || "Error loading attendance records");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleEmployeeSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const empId = e.target.value;
-    setSelectedEmployeeId(empId);
-    if (empId && userId && role) {
-      getAttendance(userId, role, empId);
     }
   };
 
@@ -139,7 +167,7 @@ const AttendancePage = () => {
       setTimeIn("");
       setTimeOut("");
       getAttendance(userId, role);
-    } catch (err: unknown) {
+    } catch (err) {
       const error = err as AxiosError<{ message: string }>;
       console.error("Error submitting attendance:", error);
       alert(error?.response?.data?.message || "Error saving attendance");
@@ -153,7 +181,7 @@ const AttendancePage = () => {
       <h1 className="text-2xl font-bold mb-6">Employee Attendance</h1>
 
       {role === "3" && (
-        <div className="bg-gray-800 p-6 rounded-lg shadow w-full max-w-md mb-6">
+        <div className="bg-white -800 p-6 rounded-lg shadow w-full max-w-md mb-6">
           {alreadySubmitted ? (
             <p className="text-green-500 font-semibold mb-4">
               ✅ You have already submitted attendance for today.
@@ -190,19 +218,27 @@ const AttendancePage = () => {
 
       {(role === "1" || role === "2") && (
         <div className="w-full max-w-md mb-6">
-          <label className="block mb-2 text-sm">Select Employee to View Attendance:</label>
+          <label className="block mb-2 text-sm">Select Employee:</label>
           <select
-            onChange={handleEmployeeSelect}
+            onChange={(e) => setSelectedEmployeeId(e.target.value)}
             value={selectedEmployeeId}
-            className="w-full p-2 text-gray rounded"
+            className="w-full p-2 text-black rounded"
           >
             <option value="">-- Select Employee --</option>
             {employees.map((emp) => (
-              <option key={emp.id} value={emp.id} className="bg-black text-white">
+              <option key={emp.id} value={emp.id}>
                 {emp.name} ({emp.email})
               </option>
             ))}
           </select>
+
+          <label className="block mt-4 mb-2 text-sm">Select Date:</label>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className="w-full p-2 text-black rounded"
+          />
         </div>
       )}
 
@@ -211,12 +247,16 @@ const AttendancePage = () => {
 
         {loading ? (
           <p className="text-gray-400">Loading records...</p>
-        ) : records.length === 0 && showAbsent ? (
-          <p className="text-red-500 font-bold">❌ Absent Today</p>
+        ) : new Date(selectedDate) > new Date(today) ? (
+          <p className="text-yellow-400 font-semibold">
+            ⚠️ No attendance records found for future dates.
+          </p>
+        ) : records.length === 0 && absentEmployees.length > 0 ? (
+          <p className="text-red-400 font-semibold">
+            ❌ Absent on {new Date(selectedDate).toDateString()}
+          </p>
         ) : records.length === 0 ? (
-          <p className="text-gray-400">No attendance records found.</p>
-        ) : role !== "3" && (!selectedEmployeeId || selectedEmployeeId === userId) ? (
-          <p className="text-yellow-500 font-semibold">You cannot view your own attendance.</p>
+          <p className="text-gray-400"> Absent on {new Date(selectedDate).toDateString()}</p>
         ) : (
           <table className="w-full bg-gray-800 rounded-lg overflow-hidden">
             <thead>
@@ -225,6 +265,7 @@ const AttendancePage = () => {
                 <th className="p-2">Date</th>
                 <th className="p-2">Time In</th>
                 <th className="p-2">Time Out</th>
+                <th className="p-2">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -240,7 +281,8 @@ const AttendancePage = () => {
                   <td className="p-2">{new Date(record.date).toLocaleDateString()}</td>
                   <td className="p-2">{record.timeIn}</td>
                   <td className="p-2">{record.timeOut}</td>
-                </tr> 
+                  <td className="p-2 text-green-400 font-semibold">Present</td>
+                </tr>
               ))}
             </tbody>
           </table>
@@ -251,4 +293,3 @@ const AttendancePage = () => {
 };
 
 export default AttendancePage;
-  
